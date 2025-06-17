@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>WinGet Package Search</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 2em;
+      max-width: 700px;
+      margin: auto;
+    }
+
+    input,
+    button,
+    textarea {
+      font-size: 1em;
+      padding: 0.5em;
+      margin-top: 0.5em;
+      width: 100%;
+    }
+
+    #results a {
+      display: block;
+      margin: 0.3em 0;
+      text-decoration: none;
+      color: #0066cc; /* Blue color to indicate clickable link */
+    }
+
+    #results a:hover {
+      text-decoration: underline;
+    }
+
+    #searchArea {
+      display: none;
+      margin-top: 2em;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    .instructions {
+      font-size: 0.9em;
+      background: #f9f9f9;
+      padding: 1em;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+    }
+
+    .version {
+      color: black; /* Version text is black and not clickable */
+      margin-left: 0.5em;
+      font-size: 0.9em;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1>WinGet Package Search (via GitHub)</h1>
+
+  <div class="instructions">
+    <p>
+      To use this search, you'll need a <strong>free GitHub token</strong>. This is required by GitHub to access code
+      search.
+    </p>
+    <ol>
+      <li>Go to <a href="https://github.com/settings/tokens/new" target="_blank">GitHub Token Settings</a></li>
+      <li>Set a name (e.g., "WinGet Search")</li>
+      <li><strong>Do not select any scopes</strong> – the default is fine</li>
+      <li>Click <strong>"Generate token"</strong> and copy it (starts with <code>ghp_</code>)</li>
+      <li><strong>Keep this token saved</strong> – this page does not save it (for security)</li>
+    </ol>
+    <p>
+      Paste your token below to begin:
+    </p>
+  </div>
+
+  <input type="password" id="tokenInput" placeholder="Paste your GitHub token (starts with ghp_)" />
+  <button onclick="saveToken()">Authenticate</button>
+
+  <div id="searchArea">
+    <h2>Search WinGet Packages</h2>
+    <input type="text" id="searchQuery" placeholder="Enter package name (e.g., chrome, discord)" />
+    <button onclick="searchWingetPackages()">Search</button>
+    <div id="results"></div>
+  </div>
+
+  <script>
+    let githubToken = "";
+
+    function saveToken() {
+      const token = document.getElementById("tokenInput").value.trim();
+      if (!token.startsWith("ghp_")) {
+        alert("Please enter a valid GitHub personal access token.");
+        return;
+      }
+      githubToken = token;
+      document.getElementById("tokenInput").disabled = true;
+      document.querySelector("button").disabled = true;
+      document.getElementById("searchArea").style.display = "block";
+    }
+
+    async function searchWingetPackages() {
+      const query = document.getElementById("searchQuery").value.trim().toLowerCase();
+      const resultsDiv = document.getElementById("results");
+      resultsDiv.innerHTML = "Searching...";
+
+      if (!query) {
+        resultsDiv.textContent = "Please enter a search term.";
+        return;
+      }
+
+      const apiUrl = `https://api.github.com/search/code?q=${encodeURIComponent(query)}+in:file+repo:microsoft/winget-pkgs+path:manifests+extension:yaml`;
+
+      try {
+        const response = await fetch(apiUrl, {
+          headers: {
+            "Accept": "application/vnd.github.v3+json",
+            "Authorization": `token ${githubToken}`
+          }
+        });
+
+        const data = await response.json();
+
+        if (!data.items || data.items.length === 0) {
+          resultsDiv.textContent = "No matching packages found.";
+          return;
+        }
+
+        // Group packages by publisher, package name, and channel (if present)
+        const packages = {};
+
+        data.items.forEach(item => {
+          const parts = item.path.split('/');
+          if (parts.length < 5) return; // ignore malformed paths
+
+          // parts: [manifests, leadingLetter, Publisher, Package, maybe Channel?, Version, Filename]
+          const leadingLetter = parts[1];
+          const publisher = parts[2];
+          const packageName = parts[3];
+          let channel = null;
+          let version = null;
+          let pathParts = ['manifests', leadingLetter, publisher, packageName];
+
+          if (parts.length === 7) {
+            // Has channel
+            channel = parts[4];
+            version = parts[5];
+            pathParts.push(channel);
+          } else {
+            // No channel
+            version = parts[4];
+          }
+
+          const fullPackageId = channel
+            ? `${publisher}.${packageName}.${channel}`
+            : `${publisher}.${packageName}`;
+
+          const repoPath = pathParts.join('/');
+          const repoUrl = `https://github.com/microsoft/winget-pkgs/tree/master/${repoPath}`;
+
+          if (!packages[fullPackageId]) {
+            packages[fullPackageId] = {
+              leadingLetter,
+              publisher,
+              packageName,
+              channel,
+              repoUrl,
+              repoPath,
+              versions: []
+            };
+          }
+
+          if (version && !packages[fullPackageId].versions.includes(version)) {
+            packages[fullPackageId].versions.push(version);
+          }
+        });
+
+        // Sort package keys alphabetically
+        const sortedPackageKeys = Object.keys(packages).sort((a, b) => a.localeCompare(b));
+
+        resultsDiv.innerHTML = '';
+
+        sortedPackageKeys.forEach(pkgId => {
+          const pkg = packages[pkgId];
+          const { leadingLetter, publisher, packageName, channel, repoUrl, versions } = pkg;
+
+          let headerText = `${leadingLetter}/${publisher}/${packageName}`;
+          if (channel) headerText += `/${channel}`;
+
+          // Determine latest version
+          let latestVersion = 'N/A';
+          if (versions.length > 0) {
+            latestVersion = versions.sort((a, b) => {
+              const parseVer = v => v.split('.').map(x => parseInt(x) || 0);
+              const va = parseVer(a);
+              const vb = parseVer(b);
+              for (let i = 0; i < Math.max(va.length, vb.length); i++) {
+                if ((vb[i] || 0) !== (va[i] || 0)) return (vb[i] || 0) - (va[i] || 0);
+              }
+              return 0;
+            })[0]; // Highest version after sorting
+          }
+
+          const pkgDiv = document.createElement('div');
+          pkgDiv.style.marginBottom = '1em';
+
+          // Create clickable header
+          const pkgTitle = document.createElement('h3');
+          const pkgLink = document.createElement('a');
+          pkgLink.href = repoUrl;
+          pkgLink.textContent = headerText;
+          pkgLink.target = '_blank';
+          pkgTitle.appendChild(pkgLink);
+
+          // Add latest version
+          const versionSpan = document.createElement('span');
+          versionSpan.className = 'version';
+          versionSpan.textContent = `(${latestVersion})`;
+          pkgTitle.appendChild(versionSpan);
+
+          pkgDiv.appendChild(pkgTitle);
+
+          // Create install command
+          const installBase = channel
+            ? `${publisher}.${packageName}.${channel}`
+            : `${publisher}.${packageName}`;
+          const installCmd = document.createElement('pre');
+          installCmd.style.background = '#eee';
+          installCmd.style.padding = '6px';
+          installCmd.style.borderRadius = '4px';
+          installCmd.style.userSelect = 'all';
+          installCmd.textContent = `winget install ${installBase}`;
+          pkgDiv.appendChild(installCmd);
+
+          resultsDiv.appendChild(pkgDiv);
+        });
+
+      } catch (error) {
+        console.error(error);
+        resultsDiv.textContent = "An error occurred while searching.";
+      }
+    }
+  </script>
+
+</body>
+
+</html>
