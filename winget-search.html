@@ -1,3 +1,8 @@
+<!--
+  Copyright (c) 2025 Bryan Candiliere
+  Licensed under the MIT License.
+-->
+
 <!DOCTYPE html>
 <html lang="en">
 
@@ -26,7 +31,7 @@
       display: block;
       margin: 0.3em 0;
       text-decoration: none;
-      color: #0066cc; /* Blue color to indicate clickable link */
+      color: #0066cc;
     }
 
     #results a:hover {
@@ -51,7 +56,7 @@
     }
 
     .version {
-      color: black; /* Version text is black and not clickable */
+      color: black;
       margin-left: 0.5em;
       font-size: 0.9em;
     }
@@ -138,7 +143,7 @@
           const parts = item.path.split('/');
           if (parts.length < 5) return; // ignore malformed paths
 
-          // parts: [manifests, leadingLetter, Publisher, Package, maybe Channel?, Version, Filename]
+          // parts: [manifests, leadingLetter, Publisher, Package, Channel?, Version, Filename]
           const leadingLetter = parts[1];
           const publisher = parts[2];
           const packageName = parts[3];
