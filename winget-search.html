@@ -7,7 +7,7 @@
 <html lang="en">
 
 <head>
-  <meta charset="UTF-8">
+  <meta charset="UTF-8" />
   <title>WinGet Package Search</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
@@ -64,7 +64,6 @@
 </head>
 
 <body>
-
   <h1>WinGet Package Search (via GitHub)</h1>
 
   <div class="instructions">
@@ -89,7 +88,7 @@
 
   <div id="searchArea">
     <h2>Search WinGet Packages</h2>
-    <input type="text" id="searchQuery" placeholder="Enter package name (e.g., chrome, discord)" />
+    <input type="text" id="searchQuery" placeholder="Enter package name (e.g., google chrome, discord)" />
     <button onclick="searchWingetPackages()">Search</button>
     <div id="results"></div>
   </div>
@@ -109,6 +108,65 @@
       document.getElementById("searchArea").style.display = "block";
     }
 
+    // Determine latest version helper function
+    function getLatestVersion(versions) {
+      if (!versions || versions.length === 0) return null;
+
+      const parseVer = v => v.split('.').map(x => parseInt(x) || 0);
+
+      // Sort versions descending and return first
+      return versions.slice().sort((a, b) => {
+        const va = parseVer(a);
+        const vb = parseVer(b);
+        for (let i = 0; i < Math.max(va.length, vb.length); i++) {
+          if ((vb[i] || 0) !== (va[i] || 0)) return (vb[i] || 0) - (va[i] || 0);
+        }
+        return 0;
+      })[0];
+    }
+
+    async function fetchPackageUrl(pkg) {
+      const { leadingLetter, publisher, packageName, channel, versions } = pkg;
+      if (versions.length === 0) return null;
+
+      // Determine latest version from helper
+      const latestVersion = getLatestVersion(versions);
+      if (!latestVersion) return null;
+
+      // Determine homepage (if present)
+      const localeVariants = [
+        'yaml',
+        'locale.en-US.yaml',
+        'locale.en.yaml',
+        'locale.yaml'
+      ];
+
+      for (const variant of localeVariants) {
+        const yamlFileName = `${publisher}.${packageName}.${variant}`;
+        let url = `https://raw.githubusercontent.com/microsoft/winget-pkgs/master/manifests/${leadingLetter}/${publisher}/${packageName}/`;
+        if (channel) url += `${channel}/`;
+        url += `${latestVersion}/${yamlFileName}`;
+
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;  // try next variant if fetch failed
+
+          const text = await res.text();
+
+          // Extract PackageURL: (trim and remove quotes if present)
+          const match = text.match(/PackageURL:\s*['"]?([^'"\r\n]+)['"]?/i);
+          if (match && match[1]) {
+            return match[1].trim();  // return found URL immediately
+          }
+        } catch {
+          // Ignore error and try next variant
+          continue;
+        }
+      }
+      // If no variant matched, return null after trying all
+      return null;
+    }
+
     async function searchWingetPackages() {
       const query = document.getElementById("searchQuery").value.trim().toLowerCase();
       const resultsDiv = document.getElementById("results");
@@ -119,14 +177,18 @@
         return;
       }
 
+      // Broad search
       const apiUrl = `https://api.github.com/search/code?q=${encodeURIComponent(query)}+in:file+repo:microsoft/winget-pkgs+path:manifests+extension:yaml`;
+
+      // More precise search
+      //const apiUrl = `https://api.github.com/search/code?q=${encodeURIComponent(query)}+in:path+repo:microsoft/winget-pkgs+path:manifests+extension:yaml`;
 
       try {
         const response = await fetch(apiUrl, {
           headers: {
             "Accept": "application/vnd.github.v3+json",
-            "Authorization": `token ${githubToken}`
-          }
+            "Authorization": `token ${githubToken}`,
+          },
         });
 
         const data = await response.json();
@@ -139,17 +201,17 @@
         // Group packages by publisher, package name, and channel (if present)
         const packages = {};
 
-        data.items.forEach(item => {
-          const parts = item.path.split('/');
+        data.items.forEach((item) => {
+          const parts = item.path.split("/");
           if (parts.length < 5) return; // ignore malformed paths
 
-          // parts: [manifests, leadingLetter, Publisher, Package, Channel?, Version, Filename]
+          // Parts: [manifests, leadingLetter, Publisher, Package, Channel?, Version, Filename]
           const leadingLetter = parts[1];
           const publisher = parts[2];
           const packageName = parts[3];
           let channel = null;
           let version = null;
-          let pathParts = ['manifests', leadingLetter, publisher, packageName];
+          let pathParts = ["manifests", leadingLetter, publisher, packageName];
 
           if (parts.length === 7) {
             // Has channel
@@ -165,7 +227,7 @@
             ? `${publisher}.${packageName}.${channel}`
             : `${publisher}.${packageName}`;
 
-          const repoPath = pathParts.join('/');
+          const repoPath = pathParts.join("/");
           const repoUrl = `https://github.com/microsoft/winget-pkgs/tree/master/${repoPath}`;
 
           if (!packages[fullPackageId]) {
@@ -176,7 +238,7 @@
               channel,
               repoUrl,
               repoPath,
-              versions: []
+              versions: [],
             };
           }
 
@@ -186,64 +248,75 @@
         });
 
         // Sort package keys alphabetically
-        const sortedPackageKeys = Object.keys(packages).sort((a, b) => a.localeCompare(b));
+        const sortedPackageKeys = Object.keys(packages).sort((a, b) =>
+          a.localeCompare(b)
+        );
 
-        resultsDiv.innerHTML = '';
+        resultsDiv.innerHTML = "";
 
-        sortedPackageKeys.forEach(pkgId => {
+        // Loop sequentially so we can await fetchPackageUrl
+        for (const pkgId of sortedPackageKeys) {
           const pkg = packages[pkgId];
           const { leadingLetter, publisher, packageName, channel, repoUrl, versions } = pkg;
 
           let headerText = `${leadingLetter}/${publisher}/${packageName}`;
           if (channel) headerText += `/${channel}`;
 
-          // Determine latest version
-          let latestVersion = 'N/A';
-          if (versions.length > 0) {
-            latestVersion = versions.sort((a, b) => {
-              const parseVer = v => v.split('.').map(x => parseInt(x) || 0);
-              const va = parseVer(a);
-              const vb = parseVer(b);
-              for (let i = 0; i < Math.max(va.length, vb.length); i++) {
-                if ((vb[i] || 0) !== (va[i] || 0)) return (vb[i] || 0) - (va[i] || 0);
-              }
-              return 0;
-            })[0]; // Highest version after sorting
-          }
+          // Determine latest version from helper
+          let latestVersion = getLatestVersion(versions) || "N/A";
 
-          const pkgDiv = document.createElement('div');
-          pkgDiv.style.marginBottom = '1em';
+          const pkgDiv = document.createElement("div");
+          pkgDiv.style.marginBottom = "1em";
 
-          // Create clickable header
-          const pkgTitle = document.createElement('h3');
-          const pkgLink = document.createElement('a');
+          // Create clickable header with latest version after it
+          const pkgTitle = document.createElement("h3");
+          const pkgLink = document.createElement("a");
           pkgLink.href = repoUrl;
           pkgLink.textContent = headerText;
-          pkgLink.target = '_blank';
+          pkgLink.target = "_blank";
+          pkgLink.style.display = "inline";
+          const versionSpan = document.createElement("span");
+          versionSpan.className = "version";
+          versionSpan.textContent = `(Latest version: ${latestVersion})`;
           pkgTitle.appendChild(pkgLink);
-
-          // Add latest version
-          const versionSpan = document.createElement('span');
-          versionSpan.className = 'version';
-          versionSpan.textContent = `(${latestVersion})`;
           pkgTitle.appendChild(versionSpan);
-
           pkgDiv.appendChild(pkgTitle);
+
+          // Fetch and add PackageURL link if available
+          const packageHomeUrl = await fetchPackageUrl(pkg);
+          if (packageHomeUrl) {
+            const urlContainer = document.createElement("div");
+            //const label = document.createElement("span");
+            //label.textContent = "URL: ";
+            const homeLink = document.createElement("a");
+            homeLink.href = packageHomeUrl;
+            homeLink.textContent = packageHomeUrl;
+            homeLink.target = "_blank";
+            //urlContainer.appendChild(label);
+            urlContainer.appendChild(homeLink);
+            pkgDiv.appendChild(urlContainer);
+          }
 
           // Create install command
           const installBase = channel
             ? `${publisher}.${packageName}.${channel}`
             : `${publisher}.${packageName}`;
-          const installCmd = document.createElement('pre');
-          installCmd.style.background = '#eee';
-          installCmd.style.padding = '6px';
-          installCmd.style.borderRadius = '4px';
-          installCmd.style.userSelect = 'all';
+          const installCmd = document.createElement("pre");
+          installCmd.style.background = "#eee";
+          installCmd.style.padding = "6px";
+          installCmd.style.borderRadius = "4px";
+          installCmd.style.userSelect = "all";
           installCmd.textContent = `winget install ${installBase}`;
           pkgDiv.appendChild(installCmd);
-
           resultsDiv.appendChild(pkgDiv);
-        });
+
+          // Create a horizontal line
+          const line = document.createElement("div");
+          line.style.borderTop = "1px solid #ccc";
+          line.style.margin = "1em 0";
+          pkgDiv.appendChild(line);
+
+        }
 
       } catch (error) {
         console.error(error);
