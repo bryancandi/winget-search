@@ -125,6 +125,7 @@
       })[0];
     }
 
+    // Determine package URL (if present)
     async function fetchPackageUrl(pkg) {
       const { leadingLetter, publisher, packageName, channel, versions } = pkg;
       if (versions.length === 0) return null;
@@ -133,7 +134,6 @@
       const latestVersion = getLatestVersion(versions);
       if (!latestVersion) return null;
 
-      // Determine homepage (if present)
       const localeVariants = [
         'yaml',
         'locale.en-US.yaml',
@@ -142,7 +142,8 @@
       ];
 
       for (const variant of localeVariants) {
-        const yamlFileName = `${publisher}.${packageName}.${variant}`;
+        const baseId = channel ? `${publisher}.${packageName}.${channel}` : `${publisher}.${packageName}`;
+        const yamlFileName = `${baseId}.${variant}`;
         let url = `https://raw.githubusercontent.com/microsoft/winget-pkgs/master/manifests/${leadingLetter}/${publisher}/${packageName}/`;
         if (channel) url += `${channel}/`;
         url += `${latestVersion}/${yamlFileName}`;
@@ -164,6 +165,38 @@
         }
       }
       // If no variant matched, return null after trying all
+      return null;
+    }
+
+    // Determine installer URL (if present)
+    async function fetchInstallerUrl(pkg) {
+      const { leadingLetter, publisher, packageName, channel, versions } = pkg;
+      if (versions.length === 0) return null;
+
+      // Determine latest version from helper
+      const latestVersion = getLatestVersion(versions);
+      if (!latestVersion) return null;
+
+      const baseId = channel ? `${publisher}.${packageName}.${channel}` : `${publisher}.${packageName}`;
+      const yamlFileName = `${baseId}.installer.yaml`;
+      let url = `https://raw.githubusercontent.com/microsoft/winget-pkgs/master/manifests/${leadingLetter}/${publisher}/${packageName}/`;
+      if (channel) url += `${channel}/`;
+      url += `${latestVersion}/${yamlFileName}`;
+
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+
+        const text = await res.text();
+
+        // Extract InstallerURL: (trim and remove quotes if present)
+        const match = text.match(/InstallerUrl:\s*['"]?([^'"\r\n]+)['"]?/i);
+        if (match && match[1]) {
+          return match[1].trim();
+        }
+      } catch {
+        return null;
+      }
       return null;
     }
 
@@ -213,14 +246,15 @@
           let version = null;
           let pathParts = ["manifests", leadingLetter, publisher, packageName];
 
-          if (parts.length === 7) {
+          // Detect if parts[4] is a version (starts with number)
+          if (/^\d+\.\d+/.test(parts[4])) {
+            // No channel
+            version = parts[4];
+          } else {
             // Has channel
             channel = parts[4];
             version = parts[5];
             pathParts.push(channel);
-          } else {
-            // No channel
-            version = parts[4];
           }
 
           const fullPackageId = channel
@@ -286,14 +320,29 @@
           const packageHomeUrl = await fetchPackageUrl(pkg);
           if (packageHomeUrl) {
             const urlContainer = document.createElement("div");
-            //const label = document.createElement("span");
-            //label.textContent = "URL: ";
+            const label = document.createElement("div");
+            label.textContent = "Website:";
             const homeLink = document.createElement("a");
             homeLink.href = packageHomeUrl;
             homeLink.textContent = packageHomeUrl;
             homeLink.target = "_blank";
-            //urlContainer.appendChild(label);
+            urlContainer.appendChild(label);
             urlContainer.appendChild(homeLink);
+            pkgDiv.appendChild(urlContainer);
+          }
+
+          // Fetch and add InstallerURL link if available
+          const installerUrl = await fetchInstallerUrl(pkg);
+          if (installerUrl) {
+            const urlContainer = document.createElement("div");
+            const label = document.createElement("div");
+            label.textContent = "Download:";
+            const installLink = document.createElement("a");
+            installLink.href = installerUrl;
+            installLink.textContent = installerUrl;
+            installLink.target = "_blank";
+            urlContainer.appendChild(label);
+            urlContainer.appendChild(installLink);
             pkgDiv.appendChild(urlContainer);
           }
 
